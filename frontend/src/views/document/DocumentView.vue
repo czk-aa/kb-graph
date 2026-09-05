@@ -58,6 +58,9 @@
       </div>
     </div>
 
+    <!-- 评论 -->
+    <CommentPanel :doc-id="docId" />
+
     <!-- 版本历史弹窗 -->
     <el-dialog v-model="showVersions" title="版本历史" width="700px">
       <el-table :data="versions" v-loading="versionLoading" stripe>

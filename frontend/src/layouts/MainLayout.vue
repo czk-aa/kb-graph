@@ -10,15 +10,22 @@
         <el-button link type="danger" @click="logout">退出</el-button>
       </div>
     </el-aside>
-    <el-main class="main">
-      <router-view />
-    </el-main>
+    <el-container>
+      <el-header class="topbar" height="48px">
+        <div class="topbar-spacer" />
+        <NotificationBell />
+      </el-header>
+      <el-main class="main">
+        <router-view />
+      </el-main>
+    </el-container>
   </el-container>
 </template>
 
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import NotificationBell from '@/components/notification/NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -55,6 +62,17 @@ function logout() {
   justify-content: space-between;
   align-items: center;
   border-top: 1px solid var(--el-border-color-light);
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: #fff;
+}
+.topbar-spacer {
+  flex: 1;
 }
 .main {
   background: var(--el-fill-color-lighter);
