@@ -26,9 +26,13 @@ def create_app() -> FastAPI:
             content={"code": exc.code, "message": exc.message},
         )
 
-    from app.api.v1 import api_router  # 延迟导入避免循环
+    from app.api.v1 import api_router
 
     app.include_router(api_router, prefix="/api/v1")
+
+    # 挂载 Yjs 协同编辑 WebSocket
+    from app.ws.collab import create_collab_server
+    app.mount("/ws/collab", create_collab_server())
 
     @app.get("/healthz")
     async def healthz() -> dict:
