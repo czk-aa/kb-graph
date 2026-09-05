@@ -4,8 +4,6 @@
       <div class="logo">KB-Graph</div>
       <el-menu :default-active="route.path" router class="menu">
         <el-menu-item index="/spaces">知识空间</el-menu-item>
-        <el-menu-item index="/chat" disabled>AI 问答（建设中）</el-menu-item>
-        <el-menu-item index="/graph" disabled>知识图谱（建设中）</el-menu-item>
       </el-menu>
       <div class="user-box">
         <span class="nickname">{{ auth.user?.nickname ?? '...' }}</span>

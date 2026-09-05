@@ -140,6 +140,15 @@ class FakeLLMClient:
 
 
 @pytest.fixture
+async def db():
+    """直接可用的数据库会话（供单元级图测试等使用）。"""
+    from app.db.session import get_session_factory
+
+    async with get_session_factory()() as session:
+        yield session
+
+
+@pytest.fixture
 async def client():
     """httpx ASGI 客户端。"""
     from httpx import ASGITransport, AsyncClient

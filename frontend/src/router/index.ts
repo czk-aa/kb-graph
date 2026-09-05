@@ -26,6 +26,16 @@ const router = createRouter({
           name: 'spaces',
           component: () => import('@/views/spaces/SpaceListView.vue'),
         },
+        {
+          path: 'spaces/:id',
+          name: 'spaceDetail',
+          component: () => import('@/views/space/SpaceDetailView.vue'),
+        },
+        {
+          path: 'spaces/:spaceId/documents/:docId',
+          name: 'document',
+          component: () => import('@/views/document/DocumentView.vue'),
+        },
       ],
     },
   ],

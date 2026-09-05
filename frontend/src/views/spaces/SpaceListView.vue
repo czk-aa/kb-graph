@@ -7,7 +7,7 @@
 
     <el-row :gutter="16">
       <el-col v-for="space in spaces" :key="space.id" :span="8">
-        <el-card class="space-card" shadow="hover">
+        <el-card class="space-card" shadow="hover" @click="$router.push(`/spaces/${space.id}`)">
           <div class="space-title">
             <span>{{ space.name }}</span>
             <el-tag size="small" :type="roleTagType(space.my_role)">
