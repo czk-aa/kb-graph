@@ -18,14 +18,44 @@
       </div>
     </div>
 
-    <div class="editor-area">
-      <el-input
-        v-model="content"
-        type="textarea"
-        :rows="25"
-        placeholder="在此编写文档内容…"
-        class="editor"
-      />
+    <div class="body">
+      <div class="editor-area">
+        <el-input
+          v-model="content"
+          type="textarea"
+          :rows="22"
+          placeholder="在此编写文档内容…"
+          class="editor"
+        />
+      </div>
+
+      <div class="side-panel">
+        <!-- AI 摘要与标签 -->
+        <div v-if="summary || tags?.length" class="panel-section">
+          <h4>AI 摘要</h4>
+          <p class="summary-text">{{ summary }}</p>
+          <div v-if="tags?.length" class="tags">
+            <el-tag v-for="t in tags" :key="t" size="small" class="tag">{{ t }}</el-tag>
+          </div>
+        </div>
+
+        <!-- 关联文档 -->
+        <div class="panel-section">
+          <h4>关联文档</h4>
+          <div v-if="related.length" class="related-list">
+            <div
+              v-for="r in related"
+              :key="r.id"
+              class="related-item"
+              @click="$router.push(`/spaces/${spaceId}/documents/${r.id}`)"
+            >
+              <span class="related-title">{{ r.title }}</span>
+              <span v-if="r.summary" class="related-summary">{{ r.summary.slice(0, 60) }}…</span>
+            </div>
+          </div>
+          <el-empty v-else description="暂无关联" :image-size="40" />
+        </div>
+      </div>
     </div>
 
     <!-- 版本历史弹窗 -->
@@ -57,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
@@ -67,6 +97,8 @@ import {
   updateDocument,
   getVersions,
   restoreVersion,
+  getRelatedDocuments,
+  type Document,
   type DocumentVersion,
 } from '@/api/documents'
 
@@ -76,16 +108,32 @@ const docId = computed(() => Number(route.params.docId))
 
 const title = ref('')
 const content = ref('')
+const summary = ref('')
+const tags = ref<string[]>([])
 const saving = ref(false)
 const showVersions = ref(false)
 const versions = ref<DocumentVersion[]>([])
 const versionLoading = ref(false)
+const related = ref<Document[]>([])
 
 onMounted(async () => {
+  await loadDoc()
+  loadRelated()
+})
+
+async function loadDoc() {
   const doc = await getDocument(docId.value)
   title.value = doc.title
   content.value = doc.content_text || ''
-})
+  summary.value = doc.summary || ''
+  tags.value = doc.tags || []
+}
+
+async function loadRelated() {
+  try {
+    related.value = await getRelatedDocuments(docId.value)
+  } catch { /* ignore */ }
+}
 
 async function saveTitle() {
   if (!title.value.trim()) return
@@ -99,6 +147,11 @@ async function saveContent() {
   try {
     await saveContent(docId.value, content.value)
     ElMessage.success('保存成功')
+    // 保存后重新加载摘要和关联
+    setTimeout(async () => {
+      await loadDoc()
+      loadRelated()
+    }, 2000)
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || '保存失败')
   } finally {
@@ -126,9 +179,6 @@ async function restore(versionNo: number) {
   }
 }
 
-// 打开弹窗时自动加载版本
-const showVersionsRef = ref(showVersions)
-import { watch } from 'vue'
 watch(showVersions, (v) => {
   if (v) loadVersions()
 })
@@ -144,6 +194,21 @@ function fmt(d: string) {
 .header-left { display: flex; align-items: center; gap: 8px; flex: 1; }
 .title-input { max-width: 400px; }
 .header-actions { display: flex; gap: 8px; }
-.editor-area { margin-top: 16px; }
+
+.body { display: flex; gap: 20px; }
+.editor-area { flex: 1; }
 .editor { font-family: 'Consolas', 'Monaco', monospace; font-size: 14px; line-height: 1.6; }
+
+.side-panel { width: 260px; flex-shrink: 0; }
+.panel-section { margin-bottom: 20px; padding: 12px; background: var(--el-fill-color); border-radius: 8px; }
+.panel-section h4 { margin: 0 0 8px; font-size: 14px; color: var(--el-text-color-secondary); }
+.summary-text { font-size: 13px; line-height: 1.6; color: var(--el-text-color-regular); }
+.tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+.tag { margin: 0; }
+
+.related-list { display: flex; flex-direction: column; gap: 6px; }
+.related-item { padding: 6px 8px; cursor: pointer; border-radius: 4px; }
+.related-item:hover { background: var(--el-fill-color-light); }
+.related-title { font-size: 13px; font-weight: 500; display: block; }
+.related-summary { font-size: 11px; color: var(--el-text-color-secondary); display: block; margin-top: 2px; }
 </style>

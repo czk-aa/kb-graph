@@ -90,3 +90,13 @@ export async function getJobs(id: number): Promise<Job[]> {
   const { data } = await http.get(`/documents/${id}/jobs`)
   return data
 }
+
+export async function getRelatedDocuments(id: number, limit = 5): Promise<Document[]> {
+  const { data } = await http.get(`/documents/${id}/related`, { params: { limit } })
+  return data
+}
+
+export async function triggerSummarize(id: number): Promise<Job> {
+  const { data } = await http.post(`/documents/${id}/summarize`)
+  return data
+}

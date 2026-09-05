@@ -208,11 +208,15 @@ async def put_document_content(
     await _bump_version(db, doc, current_user.id, body.content_text, body.content_json)
     await db.commit()
     await db.refresh(doc)
-    # 内容变化 → 重新向量化
+    # 内容变化 → 重新向量化 + 图谱抽取 + AI摘要
     if body.content_text:
         from app.tasks.embed_task import enqueue_embed
+        from app.tasks.extract_task import enqueue_extract
+        from app.tasks.summarize_task import enqueue_summarize
 
         await enqueue_embed(doc.id)
+        await enqueue_extract(doc.id)
+        await enqueue_summarize(doc.id)
     return DocumentDetailOut.model_validate(doc)
 
 
@@ -275,6 +279,52 @@ async def restore_version(
     return DocumentDetailOut.model_validate(doc)
 
 
+@router.get("/documents/{document_id}/related", response_model=list[DocumentOut])
+async def related_documents(
+    document_id: int, current_user: CurrentUser, db: DbSession, limit: int = 5
+) -> list[DocumentOut]:
+    """向量相似度推荐关联文档（排除自身）。"""
+    doc = await _load_doc(db, document_id)
+    await require_space_role("member")(doc.space_id, current_user, db)
+
+    # 取该文档的一个代表性 chunk 做向量相似度推荐
+    from sqlalchemy import text as stext
+
+    factory = get_session_factory()
+    async with factory() as s:
+        rows = await s.execute(
+            stext(
+                """
+                SELECT DISTINCT d.id, d.title, d.status, d.source_type, d.summary, d.tags,
+                       d.content_text, d.created_by, d.created_at, d.updated_at, d.space_id,
+                       1 - (c.embedding <=> (SELECT embedding FROM chunks WHERE document_id = :doc_id LIMIT 1)) AS score
+                FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                WHERE d.space_id = :space_id AND d.id != :doc_id AND d.status = 'ready'
+                ORDER BY score DESC
+                LIMIT :limit
+                """
+            ),
+            {"doc_id": document_id, "space_id": doc.space_id, "limit": limit},
+        )
+        docs = [dict(r) for r in rows.mappings()]
+
+    return [
+        DocumentOut(
+            id=d["id"],
+            space_id=d["space_id"],
+            title=d["title"],
+            source_type=d["source_type"],
+            status=d["status"],
+            summary=d.get("summary"),
+            tags=d.get("tags"),
+            content_text=d.get("content_text") or "",
+            created_by=d["created_by"],
+            created_at=d["created_at"],
+            updated_at=d["updated_at"],
+        )
+        for d in docs
+    ]
 @router.delete("/documents/{document_id}", status_code=204)
 async def delete_document(
     document_id: int, current_user: CurrentUser, db: DbSession
@@ -299,6 +349,23 @@ async def trigger_extract(
     await db.commit()
     await db.refresh(job)
     await enqueue_extract(doc.id, job.id)
+    return JobOut.model_validate(job)
+
+
+@router.post("/documents/{document_id}/summarize", response_model=JobOut, status_code=202)
+async def trigger_summarize(
+    document_id: int, current_user: CurrentUser, db: DbSession
+) -> JobOut:
+    """手动触发AI摘要生成。"""
+    from app.tasks.summarize_task import enqueue_summarize
+
+    doc = await _load_doc(db, document_id)
+    await require_space_role("member")(doc.space_id, current_user, db)
+    job = AiJob(space_id=doc.space_id, document_id=doc.id, job_type=JobType.summarize)
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    await enqueue_summarize(doc.id, job.id)
     return JobOut.model_validate(job)
 
 
