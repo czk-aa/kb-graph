@@ -27,17 +27,28 @@ async def _extract_document(document_id: int, job_id: int | None = None) -> None
             chunks = (
                 await db.scalars(select(Chunk).where(Chunk.document_id == document_id))
             ).all()
-            await db.commit()  # 释放当前事务，抽取内用独立会话
 
             merged = 0
-            for chunk in chunks:
-                if len(chunk.content) < 60:  # 太短的 chunk 跳过
-                    continue
-                context = f"文档标题：{doc.title}\n章节：{chunk.section_path or '无'}\n\n{chunk.content}"
-                result = await extract_from_text(context)
-                if result and (result.entities or result.relations):
-                    await merge_extraction(doc.space_id, document_id, result)
-                    merged += 1
+            if not chunks:
+                # 没有 chunk（未做向量化），直接用文档内容抽取
+                content = doc.content_text or ""
+                if len(content) >= 60:
+                    context = f"文档标题：{doc.title}\n\n{content[:3000]}"
+                    result = await extract_from_text(context)
+                    if result and (result.entities or result.relations):
+                        await merge_extraction(doc.space_id, document_id, result)
+                        merged = 1
+            else:
+                await db.commit()  # 释放当前事务，抽取内用独立会话
+
+                for chunk in chunks:
+                    if len(chunk.content) < 60:  # 太短的 chunk 跳过
+                        continue
+                    context = f"文档标题：{doc.title}\n章节：{chunk.section_path or '无'}\n\n{chunk.content}"
+                    result = await extract_from_text(context)
+                    if result and (result.entities or result.relations):
+                        await merge_extraction(doc.space_id, document_id, result)
+                        merged += 1
 
             if job:
                 job.status = JobStatus.succeeded

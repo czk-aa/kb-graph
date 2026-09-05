@@ -162,8 +162,8 @@ GraphRAG 是结合知识图谱和向量检索的混合检索技术，
 async def _seed() -> None:
     from app.db.session import get_session_factory
     from app.models import User, Space, SpaceMember, SpaceRole, Document
-    from app.tasks.embed_task import enqueue_embed
     from app.tasks.extract_task import enqueue_extract
+    from app.tasks.summarize_task import enqueue_summarize
 
     factory = get_session_factory()
     async with factory() as db:
@@ -171,22 +171,22 @@ async def _seed() -> None:
         from app.core.security import hash_password
 
         existing = await db.scalar(
-            __import__("sqlalchemy").select(User).where(User.email == "demo@kb.local")
+            __import__("sqlalchemy").select(User).where(User.email == "demo@kb-graph.com")
         )
         if existing:
             print("[seed] 种子数据已存在，跳过")
             return
 
         demo_user = User(
-            email="demo@kb.local",
-            hashed_password=hash_password("demo123"),
+            email="demo@kb-graph.com",
+            password_hash=hash_password("demo123"),
             nickname="Demo",
         )
         db.add(demo_user)
         await db.flush()
 
         # 创建演示空间
-        space = Space(name="技术知识库", description="AI 驱动的企业技术知识库", created_by=demo_user.id)
+        space = Space(name="技术知识库", description="AI 驱动的企业技术知识库", owner_id=demo_user.id)
         db.add(space)
         await db.flush()
 
@@ -199,23 +199,23 @@ async def _seed() -> None:
                 space_id=space.id,
                 title=doc_data["title"],
                 content_text=doc_data["content"],
-                source_type="markdown",
+                source_type="editor",
                 status="ready",
                 created_by=demo_user.id,
             )
             db.add(doc)
             await db.flush()
 
-            # 触发向量化和图谱抽取
-            await enqueue_embed(doc.id)
+            # 触发图谱抽取 + AI摘要（embedding 需单独配置 API Key）
             await enqueue_extract(doc.id)
+            await enqueue_summarize(doc.id)
 
             print(f"[seed] 已创建文档: {doc_data['title']}")
 
         await db.commit()
 
     print("\n[seed] 种子数据创建完成！")
-    print("  登录邮箱: demo@kb.local")
+    print("  登录邮箱: demo@kb-graph.com")
     print("  密码: demo123")
     print(f"  共 {len(SAMPLE_DOCS)} 篇技术文档")
     print("  向量化 + 图谱抽取已触发")

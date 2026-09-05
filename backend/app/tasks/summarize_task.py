@@ -9,7 +9,7 @@ SUMMARY_PROMPT = """你是企业知识库助手。请根据以下文档内容生
 1. 一段简洁的摘要（不超过200字）
 2. 3-5个标签（关键词，逗号分隔）
 
-请严格以JSON格式输出：{"summary": "...", "tags": "tag1, tag2, tag3"}
+请严格以JSON格式输出：{{"summary": "...", "tags": "tag1, tag2, tag3"}}
 
 文档内容：
 {content}"""
