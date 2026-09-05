@@ -75,6 +75,11 @@ async def _embed_document(document_id: int, job_id: int | None = None) -> None:
             await db.commit()
             raise
 
+    # 向量化完成后链式触发图谱抽取
+    from app.tasks.extract_task import enqueue_extract
+
+    await enqueue_extract(document_id, job_id)
+
 
 @celery_app.task(name="tasks.embed_document")
 def embed_document(document_id: int, job_id: int | None = None) -> None:

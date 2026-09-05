@@ -5,6 +5,7 @@ from app.models.document import Document, DocumentVersion, DocSourceType, DocSta
 from app.models.job import AiJob, JobType, JobStatus
 from app.models.chunk import Chunk
 from app.models.chat import ChatMessage, ChatRole, ChatSession
+from app.models.graph import ChunkEntity, Entity, EntityEdge, EntityType
 
 __all__ = [
     "Base",
@@ -23,4 +24,8 @@ __all__ = [
     "ChatSession",
     "ChatMessage",
     "ChatRole",
+    "Entity",
+    "EntityEdge",
+    "EntityType",
+    "ChunkEntity",
 ]

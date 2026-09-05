@@ -285,6 +285,23 @@ async def delete_document(
     await db.commit()
 
 
+@router.post("/documents/{document_id}/extract", response_model=JobOut, status_code=202)
+async def trigger_extract(
+    document_id: int, current_user: CurrentUser, db: DbSession
+) -> JobOut:
+    """手动触发图谱抽取。"""
+    from app.tasks.extract_task import enqueue_extract
+
+    doc = await _load_doc(db, document_id)
+    await require_space_role("member")(doc.space_id, current_user, db)
+    job = AiJob(space_id=doc.space_id, document_id=doc.id, job_type=JobType.extract)
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    await enqueue_extract(doc.id, job.id)
+    return JobOut.model_validate(job)
+
+
 @router.get("/documents/{document_id}/jobs", response_model=list[JobOut])
 async def list_document_jobs(
     document_id: int, current_user: CurrentUser, db: DbSession

@@ -28,3 +28,6 @@ Thumbs.db
 
 # App data
 /pgdata/
+backend/.test_uploads/
+.pg_setup.ps1
+*.log

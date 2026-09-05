@@ -101,7 +101,24 @@ async def fake_ai_clients():
 
 
 class FakeLLMClient:
-    """脚本化流式输出的 Fake LLM。"""
+    """脚本化流式输出的 Fake LLM；chat_json 返回固定抽取结果。"""
+
+    # 与 FakeEmbedding 分桶语义一致的实体/关系样例
+    EXTRACTION = {
+        "entities": [
+            {"name": "FastAPI", "type": "technology", "description": "Python web framework", "aliases": []},
+            {"name": "PostgreSQL", "type": "technology", "description": "relational database", "aliases": []},
+        ],
+        "relations": [
+            {
+                "source": "FastAPI",
+                "target": "PostgreSQL",
+                "relation": "uses",
+                "description": "FastAPI uses PostgreSQL",
+                "evidence_quote": "FastAPI uses PostgreSQL",
+            }
+        ],
+    }
 
     def __init__(self, reply: str = "这是测试回答 [1]。") -> None:
         self.reply = reply
@@ -111,7 +128,15 @@ class FakeLLMClient:
             yield ch
 
     async def chat_json(self, system: str, user: str) -> dict:
-        return {"entities": [], "relations": []}
+        import json
+
+        # 只有抽取类 prompt 返回图谱数据；修复重试 prompt 返回原样
+        if "知识图谱构建专家" in system:
+            return self.EXTRACTION
+        try:
+            return json.loads(user)
+        except Exception:
+            return self.EXTRACTION
 
 
 @pytest.fixture
