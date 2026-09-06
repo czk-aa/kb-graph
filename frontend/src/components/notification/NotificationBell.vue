@@ -6,12 +6,12 @@
     @show="loadNotifications"
   >
     <template #reference>
-      <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
-        <el-button text>
-          <el-icon :size="20"><Bell /></el-icon>
-        </el-button>
-      </el-badge>
-    </template>
+	      <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
+	        <el-button text class="bell-btn" :class="{ 'has-unread': unreadCount > 0 }">
+	          <el-icon :size="20"><Bell /></el-icon>
+	        </el-button>
+	      </el-badge>
+	    </template>
 
     <div class="notify-panel">
       <div class="notify-header">
@@ -98,6 +98,15 @@ function fmt(d: string) {
 </script>
 
 <style scoped>
+.bell-btn.has-unread .el-icon {
+  animation: bell-ring 2s ease-in-out infinite;
+}
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0); }
+  5%, 15% { transform: rotate(15deg); }
+  10%, 20% { transform: rotate(-15deg); }
+  25% { transform: rotate(0); }
+}
 .notify-panel { max-height: 400px; overflow-y: auto; }
 .notify-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--el-border-color-lighter); margin-bottom: 8px; font-weight: 600; }
 .notify-list { display: flex; flex-direction: column; }

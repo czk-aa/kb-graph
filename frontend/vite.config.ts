@@ -16,4 +16,10 @@ export default defineConfig({
       '/ws': { target: 'ws://localhost:8000', ws: true },
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    css: true,
+    setupFiles: ['./src/__tests__/setup.ts'],
+  },
 })

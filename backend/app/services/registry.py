@@ -27,9 +27,14 @@ _llm: LLMClient | None = None
 def get_embedding_client() -> EmbeddingClient:
     global _embedding
     if _embedding is None:
-        from app.services.embedding import OpenAIEmbeddingClient
+        from app.core.config import get_settings
+        from app.services.embedding import FakeEmbeddingClient, OpenAIEmbeddingClient
 
-        _embedding = OpenAIEmbeddingClient()
+        settings = get_settings()
+        if settings.embedding_base_url:
+            _embedding = OpenAIEmbeddingClient()
+        else:
+            _embedding = FakeEmbeddingClient()
     return _embedding
 
 
