@@ -162,15 +162,8 @@ async function loadData() {
 
 function renderGraph() {
   if (!container.value) return
-
-  if (graph) {
-    graph.destroy()
-    graph = null
-  }
-
   const width = container.value.clientWidth || 800
   const height = container.value.clientHeight || 500
-
   if (width === 0 || height === 0) return
 
   const g6Nodes = filteredNodes.value.map((n) => ({
@@ -195,17 +188,26 @@ function renderGraph() {
     },
   }))
 
+  const data = { nodes: g6Nodes, edges: g6Edges }
+
+  if (graph) {
+    graph.setData(data)
+    graph.render()
+    return
+  }
+
   graph = new Graph({
     container: container.value,
     width,
     height,
-    data: { nodes: g6Nodes, edges: g6Edges },
+    data,
     layout: {
       type: 'force',
       preventOverlap: true,
       linkDistance: 150,
       nodeStrength: -200,
       edgeStrength: 0.1,
+      animation: false,
     },
     node: {
       style: (d: any) => ({
@@ -221,9 +223,7 @@ function renderGraph() {
       state: {
         hover: {
           fill: '#f59e0b',
-          lineWidth: 3,
-          shadowBlur: 10,
-          shadowColor: 'rgba(59,130,246,0.4)',
+          lineWidth: 2,
         },
       },
     },
@@ -240,13 +240,16 @@ function renderGraph() {
         endArrow: true,
       }),
       state: {
-        hover: { stroke: '#3b82f6', lineWidth: 3 },
+        hover: { stroke: '#3b82f6', lineWidth: 2 },
       },
     },
-    behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element', 'hover-activate'],
-    autoFit: 'view',
-    animation: true,
+    behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
+    autoFit: false,
+    animation: false,
   })
+
+  graph.render()
+  graph.fitView()
 
   graph.on('node:click', async (evt: any) => {
     const nodeId = evt.target?.id

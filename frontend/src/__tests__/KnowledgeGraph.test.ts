@@ -7,6 +7,7 @@ vi.mock('@antv/g6', () => {
   class MockGraph {
     destroy() {}
     render() { return Promise.resolve() }
+    setData() {}
     on() {}
     setSize() {}
     getZoom() { return 1 }
