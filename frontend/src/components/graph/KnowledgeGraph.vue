@@ -300,44 +300,57 @@ async function initThreeScene() {
 
   destroyThreeScene()
 
-  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, MeshPhongMaterial, Mesh, CylinderGeometry, MeshBasicMaterial, BufferGeometry, LineBasicMaterial, Line, AmbientLight, DirectionalLight, HemisphereLight, Color, Group, Vector3 } = await import('three')
+  const THREE = await import('three')
+  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, MeshPhysicalMaterial, Mesh, CylinderGeometry, MeshBasicMaterial, AmbientLight, DirectionalLight, HemisphereLight, Color, Group, Vector3, Points, PointsMaterial, BufferGeometry, Float32BufferAttribute, AdditiveBlending } = THREE
   const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
+  const { EffectComposer } = await import('three/examples/jsm/postprocessing/EffectComposer.js')
+  const { RenderPass } = await import('three/examples/jsm/postprocessing/RenderPass.js')
+  const { UnrealBloomPass } = await import('three/examples/jsm/postprocessing/UnrealBloomPass.js')
 
   const W = el.clientWidth
   const H = el.clientHeight
 
   const scene = new Scene()
-  scene.background = new Color(0x0f172a)
+  scene.background = new Color(0x0a0e1a)
 
-  const camera = new PerspectiveCamera(60, W / H, 0.1, 5000)
-  camera.position.set(0, 200, 500)
+  const camera = new PerspectiveCamera(50, W / H, 0.1, 5000)
+  camera.position.set(0, 300, 700)
 
-  const renderer = new WebGLRenderer({ antialias: true, alpha: true })
+  const renderer = new WebGLRenderer({ antialias: true, alpha: false })
   renderer.setSize(W, H)
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.toneMapping = 2
+  renderer.toneMappingExposure = 1.2
   el.appendChild(renderer.domElement)
+
+  // Bloom 后期
+  const composer = new EffectComposer(renderer)
+  composer.addPass(new RenderPass(scene, camera))
+  const bloom = new UnrealBloomPass(new Vector2(W, H), 0.6, 0.3, 0.1)
+  composer.addPass(bloom)
 
   const controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
   controls.dampingFactor = 0.08
-  controls.minDistance = 100
-  controls.maxDistance = 2000
+  controls.minDistance = 200
+  controls.maxDistance = 3000
+  controls.autoRotate = false
 
   // 光源
-  scene.add(new AmbientLight(0x404060, 0.6))
-  scene.add(new DirectionalLight(0xffffff, 1.2))
-  scene.add(new HemisphereLight(0x8888ff, 0x444422, 0.8))
+  scene.add(new AmbientLight(0x404060, 0.8))
+  scene.add(new DirectionalLight(0xffffff, 1.5))
+  scene.add(new HemisphereLight(0x8888ff, 0x444422, 1.0))
 
   // 节点球体
   const nodeGroup = new Group()
   const nodeMeshes: any[] = []
   const nodePositions: { id: string; x: number; y: number; z: number }[] = []
+  const nodeData: { id: string; color: string; size: number }[] = []
 
   const items = filteredNodes.value
   const sorted = [...items].sort((a, b) => b.mention_count - a.mention_count)
   const goldenAngle = Math.PI * (3 - Math.sqrt(5))
-  const spacing = Math.min(120, Math.max(60, 600 / Math.sqrt(sorted.length)))
-  const centerZ = 0
+  const spacing = Math.min(280, Math.max(150, 1400 / Math.sqrt(sorted.length)))
 
   for (let i = 0; i < sorted.length; i++) {
     const n = sorted[i]
@@ -345,28 +358,34 @@ async function initThreeScene() {
     const radius = Math.sqrt(i + 1) * spacing
     const x = radius * Math.cos(angle)
     const y = radius * Math.sin(angle)
-    // z 按重要性随机偏移，越重要越靠近中心
-    const z = (Math.random() - 0.5) * (60 - i * 0.5)
+    const z = (Math.random() - 0.5) * (120 - i * 1.2)
     const size = 8 + Math.log2(n.mention_count + 1) * 4
     const color = TYPE_COLORS[n.type] || TYPE_COLORS.other
 
-    const geo = new SphereGeometry(size, 24, 24)
-    const mat = new MeshPhongMaterial({
+    const geo = new SphereGeometry(size, 32, 32)
+    const mat = new MeshPhysicalMaterial({
       color: color,
       emissive: color,
-      emissiveIntensity: 0.15,
-      shininess: 40,
+      emissiveIntensity: 0.3,
+      metalness: 0.1,
+      roughness: 0.3,
+      clearcoat: 0.4,
+      clearcoatRoughness: 0.3,
+      envMapIntensity: 0.5,
     })
     const mesh = new Mesh(geo, mat)
     mesh.position.set(x, y, z)
-    mesh.userData = { nodeId: String(n.id), name: n.name }
+    mesh.userData = { nodeId: String(n.id), name: n.name, baseSize: size, phase: Math.random() * Math.PI * 2 }
     nodeGroup.add(mesh)
     nodeMeshes.push(mesh)
     nodePositions.push({ id: String(n.id), x, y, z })
+    nodeData.push({ id: String(n.id), color, size })
   }
   scene.add(nodeGroup)
 
-  // 边（发光圆柱体）
+  // 边（发光圆柱体）+ 粒子流
+  const edgeParticles: { src: typeof Vector3; dst: typeof Vector3; t: number; speed: number }[] = []
+
   for (const e of filteredEdges.value) {
     const src = nodePositions.find((p) => p.id === String(e.src_id))
     const dst = nodePositions.find((p) => p.id === String(e.dst_id))
@@ -379,6 +398,7 @@ async function initThreeScene() {
     const weight = e.weight || 1
     const radius = Math.min(0.3 + weight * 0.15, 1.2)
     const opacity = Math.min(0.4 + weight * 0.1, 0.85)
+
     // 主连线
     const geo = new CylinderGeometry(radius, radius, length, 6)
     const mat = new MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity })
@@ -386,21 +406,74 @@ async function initThreeScene() {
     mesh.position.set((src.x + dst.x) / 2, (src.y + dst.y) / 2, (src.z + dst.z) / 2)
     mesh.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), new Vector3(dx, dy, dz).normalize())
     scene.add(mesh)
-    // 外层光晕（更宽的透明圆柱）
+
+    // 外层光晕
     if (weight > 1) {
-      const glowGeo = new CylinderGeometry(radius * 2.5, radius * 2.5, length, 6)
-      const glowMat = new MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: opacity * 0.2 })
+      const glowGeo = new CylinderGeometry(radius * 3, radius * 3, length, 6)
+      const glowMat = new MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: opacity * 0.15 })
       const glowMesh = new Mesh(glowGeo, glowMat)
       glowMesh.position.copy(mesh.position)
       glowMesh.quaternion.copy(mesh.quaternion)
       scene.add(glowMesh)
     }
+
+    // 粒子流
+    const particleCount = Math.max(3, Math.floor(weight * 4))
+    for (let p = 0; p < particleCount; p++) {
+      edgeParticles.push({
+        src: new Vector3(src.x, src.y, src.z),
+        dst: new Vector3(dst.x, dst.y, dst.z),
+        t: p / particleCount,
+        speed: (0.3 + Math.random() * 0.4) * (weight > 1 ? 1.5 : 1),
+      })
+    }
   }
 
-  threeScene = { scene, camera, renderer, controls, nodeGroup, nodeMeshes, nodePositions, el }
+  // 粒子流系统
+  const particleCount = edgeParticles.length
+  const particleGeo = new BufferGeometry()
+  const particlePos = new Float32Array(particleCount * 3)
+  for (let i = 0; i < particleCount; i++) {
+    const p = edgeParticles[i]
+    particlePos[i * 3] = p.src.x + (p.dst.x - p.src.x) * p.t
+    particlePos[i * 3 + 1] = p.src.y + (p.dst.y - p.src.y) * p.t
+    particlePos[i * 3 + 2] = p.src.z + (p.dst.z - p.src.z) * p.t
+  }
+  particleGeo.setAttribute('position', new Float32BufferAttribute(particlePos, 3))
+  const particleMat = new PointsMaterial({
+    color: 0x93c5fd,
+    size: 2.5,
+    transparent: true,
+    opacity: 0.8,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  })
+  const particleSystem = new Points(particleGeo, particleMat)
+  scene.add(particleSystem)
+
+  // 背景星空粒子（增强）
+  const bgStarCount = 800
+  const bgStarPos = new Float32Array(bgStarCount * 3)
+  for (let i = 0; i < bgStarCount * 3; i++) {
+    bgStarPos[i] = (Math.random() - 0.5) * 3000
+  }
+  const bgStarGeo = new BufferGeometry()
+  bgStarGeo.setAttribute('position', new Float32BufferAttribute(bgStarPos, 3))
+  const bgStarMat = new PointsMaterial({
+    color: 0xffffff,
+    size: 0.8,
+    transparent: true,
+    opacity: 0.5,
+    blending: AdditiveBlending,
+    depthWrite: false,
+  })
+  const bgStars = new Points(bgStarGeo, bgStarMat)
+  scene.add(bgStars)
+
+  threeScene = { scene, camera, renderer, controls, composer, nodeGroup, nodeMeshes, nodePositions, nodeData, particleSystem, particleMat, edgeParticles, el, bloom }
 
   // 点击射线检测
-  const raycaster = (await import('three')).Raycaster
+  const raycaster = new THREE.Raycaster()
   const mouse = { x: 0, y: 0 }
   renderer.domElement.addEventListener('click', async (evt: MouseEvent) => {
     const rect = renderer.domElement.getBoundingClientRect()
@@ -422,17 +495,43 @@ async function initThreeScene() {
     }
   })
 
-  // 自动旋转（默认缓慢自转）
   let autoRotate = true
   controls.addEventListener('start', () => { autoRotate = false })
   controls.addEventListener('end', () => { autoRotate = true })
 
-  function animate() {
+  // 动画循环
+  function animate(time: number) {
     if (autoRotate && threeScene) {
-      nodeGroup.rotation.y += 0.002
+      nodeGroup.rotation.y += 0.0015
     }
+
+    // 节点脉冲
+    for (const mesh of nodeMeshes) {
+      const phase = mesh.userData.phase || 0
+      const scale = 1 + Math.sin(time * 0.002 + phase) * 0.06
+      mesh.scale.setScalar(scale)
+      const mat = mesh.material as any
+      if (mat.emissiveIntensity) {
+        mat.emissiveIntensity = 0.2 + Math.sin(time * 0.003 + phase) * 0.15
+      }
+    }
+
+    // 粒子流动画
+    if (threeScene) {
+      const pos = particleSystem.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < edgeParticles.length; i++) {
+        const p = edgeParticles[i]
+        p.t += 0.005 * p.speed
+        if (p.t > 1) p.t -= 1
+        pos[i * 3] = p.src.x + (p.dst.x - p.src.x) * p.t
+        pos[i * 3 + 1] = p.src.y + (p.dst.y - p.src.y) * p.t
+        pos[i * 3 + 2] = p.src.z + (p.dst.z - p.src.z) * p.t
+      }
+      particleSystem.geometry.attributes.position.needsUpdate = true
+    }
+
     controls.update()
-    renderer.render(scene, camera)
+    composer.render()
     threeAnimId = requestAnimationFrame(animate)
   }
   threeAnimId = requestAnimationFrame(animate)
