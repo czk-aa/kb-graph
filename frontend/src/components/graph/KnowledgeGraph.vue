@@ -301,7 +301,7 @@ async function initThreeScene() {
   destroyThreeScene()
 
   const THREE = await import('three')
-  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, MeshPhysicalMaterial, Mesh, CylinderGeometry, MeshBasicMaterial, AmbientLight, DirectionalLight, HemisphereLight, Color, Group, Vector3, Points, PointsMaterial, BufferGeometry, Float32BufferAttribute, AdditiveBlending } = THREE
+  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, RingGeometry, MeshPhysicalMaterial, Mesh, CylinderGeometry, MeshBasicMaterial, AmbientLight, DirectionalLight, HemisphereLight, Color, Group, Vector3, Points, PointsMaterial, BufferGeometry, Float32BufferAttribute, AdditiveBlending } = THREE
   const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
   const { EffectComposer } = await import('three/examples/jsm/postprocessing/EffectComposer.js')
   const { RenderPass } = await import('three/examples/jsm/postprocessing/RenderPass.js')
@@ -318,15 +318,16 @@ async function initThreeScene() {
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: false })
   renderer.setSize(W, H)
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   renderer.toneMapping = 2
   renderer.toneMappingExposure = 1.2
   el.appendChild(renderer.domElement)
 
-  // Bloom 后期
+  // Bloom 后期（0.5 分辨率提升性能）
   const composer = new EffectComposer(renderer)
   composer.addPass(new RenderPass(scene, camera))
   const bloom = new UnrealBloomPass(new Vector2(W, H), 0.6, 0.3, 0.1)
+  bloom.resolution.setScalar(0.5)
   composer.addPass(bloom)
 
   const controls = new OrbitControls(camera, renderer.domElement)
@@ -335,13 +336,14 @@ async function initThreeScene() {
   controls.minDistance = 200
   controls.maxDistance = 3000
   controls.autoRotate = false
+  controls.rotateSpeed = 0.8
 
   // 光源
   scene.add(new AmbientLight(0x404060, 0.8))
   scene.add(new DirectionalLight(0xffffff, 1.5))
   scene.add(new HemisphereLight(0x8888ff, 0x444422, 1.0))
 
-  // 节点球体
+  // 节点球体 + 光环
   const nodeGroup = new Group()
   const nodeMeshes: any[] = []
   const nodePositions: { id: string; x: number; y: number; z: number }[] = []
@@ -351,6 +353,9 @@ async function initThreeScene() {
   const sorted = [...items].sort((a, b) => b.mention_count - a.mention_count)
   const goldenAngle = Math.PI * (3 - Math.sqrt(5))
   const spacing = Math.min(280, Math.max(150, 1400 / Math.sqrt(sorted.length)))
+
+  // 共享几何体减少 GPU 开销
+  const geoCache = new Map<number, typeof SphereGeometry>()
 
   for (let i = 0; i < sorted.length; i++) {
     const n = sorted[i]
@@ -362,24 +367,45 @@ async function initThreeScene() {
     const size = 8 + Math.log2(n.mention_count + 1) * 4
     const color = TYPE_COLORS[n.type] || TYPE_COLORS.other
 
-    const geo = new SphereGeometry(size, 32, 32)
+    // 共享几何体
+    let geo = geoCache.get(Math.round(size))
+    if (!geo) {
+      geo = new SphereGeometry(size, 20, 20)
+      geoCache.set(Math.round(size), geo)
+    }
+
     const mat = new MeshPhysicalMaterial({
       color: color,
       emissive: color,
-      emissiveIntensity: 0.3,
-      metalness: 0.1,
-      roughness: 0.3,
-      clearcoat: 0.4,
-      clearcoatRoughness: 0.3,
-      envMapIntensity: 0.5,
+      emissiveIntensity: 0.35,
+      metalness: 0.15,
+      roughness: 0.25,
+      clearcoat: 0.5,
+      clearcoatRoughness: 0.2,
     })
     const mesh = new Mesh(geo, mat)
     mesh.position.set(x, y, z)
-    mesh.userData = { nodeId: String(n.id), name: n.name, baseSize: size, phase: Math.random() * Math.PI * 2 }
+    mesh.userData = { nodeId: String(n.id), name: n.name, baseSize: size, phase: Math.random() * Math.PI * 2, color }
     nodeGroup.add(mesh)
     nodeMeshes.push(mesh)
     nodePositions.push({ id: String(n.id), x, y, z })
     nodeData.push({ id: String(n.id), color, size })
+
+    // 外圈光环（扁平圆环）
+    const ringGeo = new RingGeometry(size * 1.6, size * 2.2, 24)
+    const ringMat = new MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.15,
+      side: 2,
+      depthWrite: false,
+    })
+    const ring = new Mesh(ringGeo, ringMat)
+    ring.position.set(x, y, z)
+    ring.lookAt(camera.position)
+    ring.userData = { isRing: true, phase: Math.random() * Math.PI * 2 }
+    nodeGroup.add(ring)
+    nodeMeshes.push(ring) // 添加到点击检测
   }
   scene.add(nodeGroup)
 
@@ -451,8 +477,8 @@ async function initThreeScene() {
   const particleSystem = new Points(particleGeo, particleMat)
   scene.add(particleSystem)
 
-  // 背景星空粒子（增强）
-  const bgStarCount = 800
+  // 背景星空粒子
+  const bgStarCount = 400
   const bgStarPos = new Float32Array(bgStarCount * 3)
   for (let i = 0; i < bgStarCount * 3; i++) {
     bgStarPos[i] = (Math.random() - 0.5) * 3000
@@ -461,16 +487,30 @@ async function initThreeScene() {
   bgStarGeo.setAttribute('position', new Float32BufferAttribute(bgStarPos, 3))
   const bgStarMat = new PointsMaterial({
     color: 0xffffff,
-    size: 0.8,
+    size: 0.6,
     transparent: true,
-    opacity: 0.5,
+    opacity: 0.4,
     blending: AdditiveBlending,
     depthWrite: false,
   })
   const bgStars = new Points(bgStarGeo, bgStarMat)
   scene.add(bgStars)
 
-  threeScene = { scene, camera, renderer, controls, composer, nodeGroup, nodeMeshes, nodePositions, nodeData, particleSystem, particleMat, edgeParticles, el, bloom }
+  // 中心光晕
+  const centerGlowGeo = new RingGeometry(0, 80, 32)
+  const centerGlowMat = new MeshBasicMaterial({
+    color: 0x3b82f6,
+    transparent: true,
+    opacity: 0.04,
+    side: 2,
+    depthWrite: false,
+  })
+  const centerGlow = new Mesh(centerGlowGeo, centerGlowMat)
+  centerGlow.position.set(0, 0, 0)
+  centerGlow.lookAt(camera.position)
+  scene.add(centerGlow)
+
+  threeScene = { scene, camera, renderer, controls, composer, nodeGroup, nodeMeshes, centerGlow, particleSystem, particleMat, edgeParticles, el, bloom }
 
   // 点击射线检测
   const raycaster = new THREE.Raycaster()
@@ -505,16 +545,27 @@ async function initThreeScene() {
       nodeGroup.rotation.y += 0.0015
     }
 
-    // 节点脉冲
+    // 节点脉冲 + 光环始终面向相机
     for (const mesh of nodeMeshes) {
+      if (mesh.userData.isRing) {
+        mesh.lookAt(camera.position)
+        const phase = mesh.userData.phase || 0
+        const s = 1 + Math.sin(time * 0.0015 + phase) * 0.1
+        mesh.scale.setScalar(s)
+        continue
+      }
       const phase = mesh.userData.phase || 0
       const scale = 1 + Math.sin(time * 0.002 + phase) * 0.06
       mesh.scale.setScalar(scale)
       const mat = mesh.material as any
       if (mat.emissiveIntensity) {
-        mat.emissiveIntensity = 0.2 + Math.sin(time * 0.003 + phase) * 0.15
+        mat.emissiveIntensity = 0.25 + Math.sin(time * 0.003 + phase) * 0.15
       }
     }
+
+    // 中心光晕面向相机
+    centerGlow.lookAt(camera.position)
+    centerGlow.scale.setScalar(1 + Math.sin(time * 0.001) * 0.05)
 
     // 粒子流动画
     if (threeScene) {
