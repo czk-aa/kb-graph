@@ -25,6 +25,11 @@
 
       <span class="graph-info">{{ filteredNodes.length }} 实体, {{ filteredEdges.length }} 关系</span>
 
+      <el-button size="small" text type="warning" @click="handleCleanup" :loading="cleaning">
+        <el-icon :size="14"><Delete /></el-icon>
+        清理孤立实体
+      </el-button>
+
       <div class="zoom-controls">
         <el-button circle size="small" @click="zoomOut" :disabled="!graph">
           <el-icon :size="14"><Minus /></el-icon>
@@ -94,9 +99,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessageBox, ElMessage } from 'element-plus'
 import { Graph } from '@antv/g6'
-import { Search as SearchIcon, Minus, Plus, FullScreen, Loading, Share, Document } from '@element-plus/icons-vue'
-import { getGraphOverview, getEntityDetail, type GraphNode, type GraphEdge } from '@/api/graph'
+import { Search as SearchIcon, Minus, Plus, FullScreen, Loading, Share, Document, Delete } from '@element-plus/icons-vue'
+import { cleanupOrphanEntities, getGraphOverview, getEntityDetail, type GraphNode, type GraphEdge } from '@/api/graph'
 
 const props = defineProps<{ spaceId: number }>()
 const router = useRouter()
@@ -309,6 +315,29 @@ function doSearch() {
 function openDoc(docId: number) {
   drawerVisible.value = false
   router.push(`/spaces/${props.spaceId}/documents/${docId}`)
+}
+
+const cleaning = ref(false)
+
+async function handleCleanup() {
+  try {
+    await ElMessageBox.confirm(
+      '将删除不再被任何文档引用的孤立实体，此操作无法撤销。确定继续？',
+      '确认清理',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    cleaning.value = true
+    const { deleted } = await cleanupOrphanEntities(props.spaceId)
+    if (deleted === 0) {
+      ElMessage.success('没有需要清理的孤立实体')
+    } else {
+      ElMessage.success(`已成功删除 ${deleted} 个孤立实体`)
+    }
+    await loadData()
+    cleaning.value = false
+  } catch {
+    cleaning.value = false
+  }
 }
 
 function typeTagColor(t: string) {

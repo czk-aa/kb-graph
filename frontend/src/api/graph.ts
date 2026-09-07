@@ -55,3 +55,8 @@ export async function getEntityDetail(entityId: number): Promise<EntityDetail> {
   const { data } = await http.get(`/entities/${entityId}`)
   return data
 }
+
+export async function cleanupOrphanEntities(spaceId: number): Promise<{ deleted: number }> {
+  const { data } = await http.post(`/spaces/${spaceId}/graph/cleanup-orphans`)
+  return data
+}

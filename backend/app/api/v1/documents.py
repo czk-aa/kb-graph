@@ -330,9 +330,14 @@ async def delete_document(
     document_id: int, current_user: CurrentUser, db: DbSession
 ) -> None:
     doc = await _load_doc(db, document_id)
-    await require_space_role("member")(doc.space_id, current_user, db)
+    space_id = doc.space_id
+    await require_space_role("member")(space_id, current_user, db)
     await db.delete(doc)
     await db.commit()
+    # 文档删除后清理孤立实体
+    from app.services.cleanup import cleanup_orphan_entities
+
+    await cleanup_orphan_entities(space_id)
 
 
 @router.post("/documents/{document_id}/extract", response_model=JobOut, status_code=202)

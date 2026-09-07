@@ -1,5 +1,5 @@
 """知识图谱查询路由。"""
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from app.core.deps import CurrentUser, DbSession, require_space_role
@@ -196,3 +196,16 @@ async def entity_detail(entity_id: int, current_user: CurrentUser, db: DbSession
         "mention_count": entity.mention_count,
         "documents": doc_list,
     }
+
+
+@router.post("/spaces/{space_id}/graph/cleanup-orphans")
+async def cleanup_orphans(
+    space_id: int,
+    current_user: CurrentUser,
+    _: object = Depends(require_space_role("admin")),
+) -> dict:
+    """清理空间中无任何文档引用的孤立实体。"""
+    from app.services.cleanup import cleanup_orphan_entities
+
+    deleted = await cleanup_orphan_entities(space_id)
+    return {"deleted": deleted}
