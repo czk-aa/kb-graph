@@ -25,12 +25,17 @@
 
       <span class="graph-info">{{ filteredNodes.length }} 实体, {{ filteredEdges.length }} 关系</span>
 
+      <el-button size="small" :type="mode3d ? 'primary' : 'default'" @click="toggle3D">
+        <el-icon :size="14"><component :is="mode3d ? View : Monitor" /></el-icon>
+        {{ mode3d ? '3D' : '2D' }}
+      </el-button>
+
       <el-button size="small" text type="warning" @click="handleCleanup" :loading="cleaning">
         <el-icon :size="14"><Delete /></el-icon>
         清理孤立实体
       </el-button>
 
-      <div class="zoom-controls">
+      <div class="zoom-controls" v-if="!mode3d">
         <el-button circle size="small" @click="zoomOut" :disabled="!graph">
           <el-icon :size="14"><Minus /></el-icon>
         </el-button>
@@ -47,17 +52,20 @@
     <div class="graph-canvas-wrapper">
       <div v-if="loading" class="graph-loading">
         <el-icon :size="32" class="loading-icon"><Loading /></el-icon>
-        <span>加载图谱数据…</span>
+        <span>{{ mode3d ? '加载 3D 场景…' : '加载图谱数据…' }}</span>
       </div>
       <div v-else-if="nodes.length === 0" class="graph-empty">
         <el-icon :size="64" color="var(--color-gray-300)"><Share /></el-icon>
         <h3>暂无图谱数据</h3>
         <p>创建文档后，AI 将自动抽取实体和关系构建知识图谱</p>
       </div>
-      <div ref="container" class="graph-canvas" :class="{ hidden: loading || nodes.length === 0 }" />
+      <!-- 2D G6 容器 -->
+      <div ref="container" class="graph-canvas" :class="{ hidden: loading || nodes.length === 0 || mode3d }" />
+      <!-- 3D Three.js 容器 -->
+      <div ref="threeContainer" class="graph-canvas three-canvas" :class="{ hidden: loading || nodes.length === 0 || !mode3d }" />
     </div>
 
-    <div ref="tooltip" class="graph-tooltip" v-show="tooltipVisible" :style="tooltipStyle">
+    <div ref="tooltip" class="graph-tooltip" v-show="tooltipVisible && !mode3d" :style="tooltipStyle">
       <div class="tooltip-name">{{ tooltipData.name }}</div>
       <div class="tooltip-type">{{ tooltipData.type }}</div>
     </div>
@@ -101,13 +109,14 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { Graph } from '@antv/g6'
-import { Search as SearchIcon, Minus, Plus, FullScreen, Loading, Share, Document, Delete } from '@element-plus/icons-vue'
+import { Search as SearchIcon, Minus, Plus, FullScreen, Loading, Share, Document, Delete, View, Monitor } from '@element-plus/icons-vue'
 import { cleanupOrphanEntities, getGraphOverview, getEntityDetail, type GraphNode, type GraphEdge } from '@/api/graph'
 
 const props = defineProps<{ spaceId: number }>()
 const router = useRouter()
 
 const container = ref<HTMLElement>()
+const threeContainer = ref<HTMLElement>()
 const tooltip = ref<HTMLElement>()
 const search = ref('')
 const typeFilter = ref('')
@@ -120,9 +129,13 @@ const zoomPercent = ref(100)
 const tooltipVisible = ref(false)
 const tooltipData = ref<{ name: string; type: string }>({ name: '', type: '' })
 const tooltipStyle = ref({ left: '0px', top: '0px' })
+const cleaning = ref(false)
+const mode3d = ref(false)
 
 let graph: Graph | null = null
 let resizeObserver: ResizeObserver | null = null
+let threeScene: any = null
+let threeAnimId: number | null = null
 
 const TYPE_COLORS: Record<string, string> = {
   technology: '#3b82f6',
@@ -154,7 +167,11 @@ async function loadData() {
     nodes.value = data.nodes
     edges.value = data.edges
     await nextTick()
-    renderGraph()
+    if (mode3d.value) {
+      initThreeScene()
+    } else {
+      renderGraph()
+    }
   } finally {
     loading.value = false
   }
@@ -221,10 +238,7 @@ function renderGraph() {
         labelFontWeight: 500,
       }),
       state: {
-        hover: {
-          fill: '#f59e0b',
-          lineWidth: 2,
-        },
+        hover: { fill: '#f59e0b', lineWidth: 2 },
       },
     },
     edge: {
@@ -275,17 +289,161 @@ function renderGraph() {
     }
   })
 
-  graph.on('node:pointerleave', () => {
-    tooltipVisible.value = false
+  graph.on('node:pointerleave', () => { tooltipVisible.value = false })
+  graph.on('canvas:click', () => { tooltipVisible.value = false })
+}
+
+// ---- 3D Scene ----
+async function initThreeScene() {
+  const el = threeContainer.value
+  if (!el || filteredNodes.value.length === 0) return
+
+  destroyThreeScene()
+
+  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, MeshPhongMaterial, Mesh, BufferGeometry, LineBasicMaterial, Line, AmbientLight, DirectionalLight, HemisphereLight, Color, Group } = await import('three')
+  const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
+
+  const W = el.clientWidth
+  const H = el.clientHeight
+
+  const scene = new Scene()
+  scene.background = new Color(0x0f172a)
+
+  const camera = new PerspectiveCamera(60, W / H, 0.1, 5000)
+  camera.position.set(0, 200, 500)
+
+  const renderer = new WebGLRenderer({ antialias: true, alpha: true })
+  renderer.setSize(W, H)
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  el.appendChild(renderer.domElement)
+
+  const controls = new OrbitControls(camera, renderer.domElement)
+  controls.enableDamping = true
+  controls.dampingFactor = 0.08
+  controls.minDistance = 100
+  controls.maxDistance = 2000
+
+  // 光源
+  scene.add(new AmbientLight(0x404060, 0.6))
+  scene.add(new DirectionalLight(0xffffff, 1.2))
+  scene.add(new HemisphereLight(0x8888ff, 0x444422, 0.8))
+
+  // 节点球体
+  const nodeGroup = new Group()
+  const nodeMeshes: any[] = []
+  const nodePositions: { id: string; x: number; y: number; z: number }[] = []
+
+  const items = filteredNodes.value
+  const sorted = [...items].sort((a, b) => b.mention_count - a.mention_count)
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+  const spacing = Math.min(120, Math.max(60, 600 / Math.sqrt(sorted.length)))
+  const centerZ = 0
+
+  for (let i = 0; i < sorted.length; i++) {
+    const n = sorted[i]
+    const angle = i * goldenAngle
+    const radius = Math.sqrt(i + 1) * spacing
+    const x = radius * Math.cos(angle)
+    const y = radius * Math.sin(angle)
+    // z 按重要性随机偏移，越重要越靠近中心
+    const z = (Math.random() - 0.5) * (60 - i * 0.5)
+    const size = 8 + Math.log2(n.mention_count + 1) * 4
+    const color = TYPE_COLORS[n.type] || TYPE_COLORS.other
+
+    const geo = new SphereGeometry(size, 24, 24)
+    const mat = new MeshPhongMaterial({
+      color: color,
+      emissive: color,
+      emissiveIntensity: 0.15,
+      shininess: 40,
+    })
+    const mesh = new Mesh(geo, mat)
+    mesh.position.set(x, y, z)
+    mesh.userData = { nodeId: String(n.id), name: n.name }
+    nodeGroup.add(mesh)
+    nodeMeshes.push(mesh)
+    nodePositions.push({ id: String(n.id), x, y, z })
+  }
+  scene.add(nodeGroup)
+
+  // 边（线）
+  const edgeMaterial = new LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.3 })
+  for (const e of filteredEdges.value) {
+    const src = nodePositions.find((p) => p.id === String(e.src_id))
+    const dst = nodePositions.find((p) => p.id === String(e.dst_id))
+    if (!src || !dst) continue
+    const geo = new BufferGeometry().setFromPoints([
+      { x: src.x, y: src.y, z: src.z },
+      { x: dst.x, y: dst.y, z: dst.z },
+    ])
+    const line = new Line(geo, edgeMaterial)
+    scene.add(line)
+  }
+
+  threeScene = { scene, camera, renderer, controls, nodeGroup, nodeMeshes, nodePositions, el }
+
+  // 点击射线检测
+  const raycaster = (await import('three')).Raycaster
+  const mouse = { x: 0, y: 0 }
+  renderer.domElement.addEventListener('click', async (evt: MouseEvent) => {
+    const rect = renderer.domElement.getBoundingClientRect()
+    mouse.x = ((evt.clientX - rect.left) / rect.width) * 2 - 1
+    mouse.y = -((evt.clientY - rect.top) / rect.height) * 2 + 1
+    const ray = new raycaster()
+    ray.setFromCamera(mouse, camera)
+    const intersects = ray.intersectObjects(nodeMeshes)
+    if (intersects.length > 0) {
+      const mesh = intersects[0].object
+      const nodeId = mesh.userData.nodeId
+      if (nodeId) {
+        try {
+          const detail = await getEntityDetail(Number(nodeId))
+          selectedEntity.value = detail
+          drawerVisible.value = true
+        } catch { /* ignore */ }
+      }
+    }
   })
 
-  graph.on('canvas:click', () => {
-    tooltipVisible.value = false
-  })
+  // 自动旋转（默认缓慢自转）
+  let autoRotate = true
+  controls.addEventListener('start', () => { autoRotate = false })
+  controls.addEventListener('end', () => { autoRotate = true })
 
-  graph.render().then(() => {
-    updateZoom()
-  })
+  function animate() {
+    if (autoRotate && threeScene) {
+      nodeGroup.rotation.y += 0.002
+    }
+    controls.update()
+    renderer.render(scene, camera)
+    threeAnimId = requestAnimationFrame(animate)
+  }
+  threeAnimId = requestAnimationFrame(animate)
+}
+
+function destroyThreeScene() {
+  if (threeAnimId) {
+    cancelAnimationFrame(threeAnimId)
+    threeAnimId = null
+  }
+  if (threeScene) {
+    threeScene.renderer.domElement.remove()
+    threeScene.renderer.dispose()
+    threeScene = null
+  }
+}
+
+function toggle3D() {
+  mode3d.value = !mode3d.value
+  if (mode3d.value) {
+    // 切到 3D：隐藏 G6 tooltip，初始化 3D
+    tooltipVisible.value = false
+    nextTick(() => initThreeScene())
+  } else {
+    // 切回 2D：销毁 3D，重新渲染 2D
+    destroyThreeScene()
+    nextTick(() => renderGraph())
+  }
 }
 
 function updateZoom() {
@@ -319,8 +477,6 @@ function openDoc(docId: number) {
   drawerVisible.value = false
   router.push(`/spaces/${props.spaceId}/documents/${docId}`)
 }
-
-const cleaning = ref(false)
 
 async function handleCleanup() {
   try {
@@ -366,12 +522,23 @@ onMounted(async () => {
           graph.setSize?.(w, h)
         }
       }
+      // 3D 场景 resize
+      if (threeScene && threeContainer.value) {
+        const w = threeContainer.value.clientWidth
+        const h = threeContainer.value.clientHeight
+        if (w > 0 && h > 0) {
+          threeScene.camera.aspect = w / h
+          threeScene.camera.updateProjectionMatrix()
+          threeScene.renderer.setSize(w, h)
+        }
+      }
     })
-    resizeObserver.observe(container.value)
+    resizeObserver.observe(container.value.parentElement!)
   }
 })
 
 onUnmounted(() => {
+  destroyThreeScene()
   resizeObserver?.disconnect()
   graph?.destroy()
 })
@@ -432,6 +599,11 @@ watch(() => props.spaceId, () => {
   height: 100%;
 }
 .graph-canvas.hidden { display: none; }
+.three-canvas {
+  position: absolute;
+  inset: 0;
+  background: #0f172a;
+}
 
 .graph-loading,
 .graph-empty {
