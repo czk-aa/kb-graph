@@ -300,7 +300,7 @@ async function initThreeScene() {
 
   destroyThreeScene()
 
-  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, MeshPhongMaterial, Mesh, BufferGeometry, LineBasicMaterial, Line, AmbientLight, DirectionalLight, HemisphereLight, Color, Group } = await import('three')
+  const { Scene, PerspectiveCamera, WebGLRenderer, SphereGeometry, MeshPhongMaterial, Mesh, CylinderGeometry, MeshBasicMaterial, BufferGeometry, LineBasicMaterial, Line, AmbientLight, DirectionalLight, HemisphereLight, Color, Group, Vector3 } = await import('three')
   const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
 
   const W = el.clientWidth
@@ -366,18 +366,35 @@ async function initThreeScene() {
   }
   scene.add(nodeGroup)
 
-  // 边（线）
-  const edgeMaterial = new LineBasicMaterial({ color: 0x475569, transparent: true, opacity: 0.3 })
+  // 边（发光圆柱体）
   for (const e of filteredEdges.value) {
     const src = nodePositions.find((p) => p.id === String(e.src_id))
     const dst = nodePositions.find((p) => p.id === String(e.dst_id))
     if (!src || !dst) continue
-    const geo = new BufferGeometry().setFromPoints([
-      { x: src.x, y: src.y, z: src.z },
-      { x: dst.x, y: dst.y, z: dst.z },
-    ])
-    const line = new Line(geo, edgeMaterial)
-    scene.add(line)
+    const dx = dst.x - src.x
+    const dy = dst.y - src.y
+    const dz = dst.z - src.z
+    const length = Math.sqrt(dx * dx + dy * dy + dz * dz)
+    if (length < 1) continue
+    const weight = e.weight || 1
+    const radius = Math.min(0.3 + weight * 0.15, 1.2)
+    const opacity = Math.min(0.4 + weight * 0.1, 0.85)
+    // 主连线
+    const geo = new CylinderGeometry(radius, radius, length, 6)
+    const mat = new MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity })
+    const mesh = new Mesh(geo, mat)
+    mesh.position.set((src.x + dst.x) / 2, (src.y + dst.y) / 2, (src.z + dst.z) / 2)
+    mesh.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), new Vector3(dx, dy, dz).normalize())
+    scene.add(mesh)
+    // 外层光晕（更宽的透明圆柱）
+    if (weight > 1) {
+      const glowGeo = new CylinderGeometry(radius * 2.5, radius * 2.5, length, 6)
+      const glowMat = new MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: opacity * 0.2 })
+      const glowMesh = new Mesh(glowGeo, glowMat)
+      glowMesh.position.copy(mesh.position)
+      glowMesh.quaternion.copy(mesh.quaternion)
+      scene.add(glowMesh)
+    }
   }
 
   threeScene = { scene, camera, renderer, controls, nodeGroup, nodeMeshes, nodePositions, el }
