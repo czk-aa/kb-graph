@@ -12,6 +12,9 @@ vi.mock('@antv/g6', () => {
     getZoom() { return 1 }
     zoomTo() {}
     fitView() {}
+    rotateBy() {}
+    fitCenter() {}
+    setData() {}
   }
   return { Graph: MockGraph }
 })
@@ -53,8 +56,8 @@ describe('KnowledgeGraph', () => {
     await wrapper.vm.$nextTick()
     await new Promise((r) => setTimeout(r, 50))
     const text = wrapper.text()
-    expect(text).toContain('实体')
-    expect(text).toContain('关系')
+    expect(text).toContain('星体')
+    expect(text).toContain('星轨')
   })
 
   it('has zoom controls', () => {

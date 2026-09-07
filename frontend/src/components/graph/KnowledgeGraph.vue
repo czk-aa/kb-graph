@@ -4,15 +4,15 @@
     <div class="graph-toolbar">
       <el-input
         v-model="search"
-        placeholder="搜索实体…"
+        placeholder="搜索星系…"
         size="small"
         clearable
-        style="width: 180px"
+        style="width: 160px"
         :prefix-icon="SearchIcon"
         @keyup.enter="doSearch"
         @clear="doSearch"
       />
-      <el-select v-model="typeFilter" size="small" clearable placeholder="类型筛选" style="width: 130px" @change="doSearch">
+      <el-select v-model="typeFilter" size="small" clearable placeholder="星体类型" style="width: 130px" @change="doSearch">
         <el-option label="技术" value="technology" />
         <el-option label="概念" value="concept" />
         <el-option label="人物" value="person" />
@@ -32,17 +32,28 @@
           class="legend-dot"
           :style="{
             background: item.color,
-            opacity: typeFilter && typeFilter !== item.type ? 0.4 : 1,
+            opacity: typeFilter && typeFilter !== item.type ? 0.35 : 1,
           }"
           :title="item.label"
         />
       </div>
 
-      <span class="graph-info">{{ filteredNodes.length }} 实体, {{ filteredEdges.length }} 关系</span>
+      <span class="graph-info">{{ filteredNodes.length }} 星体, {{ filteredEdges.length }} 星轨</span>
+
+      <!-- 旋转控制 -->
+      <el-button
+        size="small"
+        text
+        @click="toggleRotation"
+        :type="isRotating ? 'primary' : 'info'"
+      >
+        <el-icon :size="14"><component :is="isRotating ? VideoPause : VideoPlay" /></el-icon>
+        {{ isRotating ? '暂停旋转' : '旋转星系' }}
+      </el-button>
 
       <el-button size="small" text type="warning" @click="handleCleanup" :loading="cleaning">
         <el-icon :size="14"><Delete /></el-icon>
-        清理孤立实体
+        清理孤立
       </el-button>
 
       <div class="zoom-controls">
@@ -61,13 +72,15 @@
 
     <!-- 图谱容器 -->
     <div class="graph-canvas-wrapper">
+      <!-- 背景星空粒子 -->
+      <div class="starfield" ref="starfieldRef" />
       <div v-if="loading" class="graph-loading">
         <el-icon :size="32" class="loading-icon"><Loading /></el-icon>
-        <span>加载图谱数据…</span>
+        <span>生成星系…</span>
       </div>
       <div v-else-if="nodes.length === 0" class="graph-empty">
         <el-icon :size="64" color="var(--color-gray-300)"><Share /></el-icon>
-        <h3>暂无图谱数据</h3>
+        <h3>星系尚未形成</h3>
         <p>创建文档后，AI 将自动抽取实体和关系构建知识图谱</p>
       </div>
       <div ref="container" class="graph-canvas" :class="{ hidden: loading || nodes.length === 0 }" />
@@ -85,7 +98,7 @@
     </div>
 
     <!-- 实体详情抽屉 -->
-    <el-drawer v-model="drawerVisible" title="实体详情" size="380px">
+    <el-drawer v-model="drawerVisible" title="星体详情" size="380px">
       <template v-if="selectedEntity">
         <div class="entity-detail">
           <div class="entity-header">
@@ -135,7 +148,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { Graph } from '@antv/g6'
-import { Search as SearchIcon, Minus, Plus, FullScreen, Loading, Share, Document, Delete } from '@element-plus/icons-vue'
+import { Search as SearchIcon, Minus, Plus, FullScreen, Loading, Share, Document, Delete, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { cleanupOrphanEntities, getGraphOverview, getSubgraph, getEntityDetail, type GraphNode, type GraphEdge } from '@/api/graph'
 
 const props = defineProps<{ spaceId: number }>()
@@ -143,6 +156,7 @@ const router = useRouter()
 
 const container = ref<HTMLElement>()
 const tooltip = ref<HTMLElement>()
+const starfieldRef = ref<HTMLElement>()
 const search = ref('')
 const typeFilter = ref('')
 const nodes = ref<GraphNode[]>([])
@@ -155,9 +169,11 @@ const tooltipVisible = ref(false)
 const tooltipData = ref<{ name: string; type: string; mentionCount?: number; docCount?: number; description?: string }>({ name: '', type: '' })
 const tooltipStyle = ref({ left: '0px', top: '0px' })
 const cleaning = ref(false)
+const isRotating = ref(true)
 
 let graph: Graph | null = null
 let resizeObserver: ResizeObserver | null = null
+let rotateRaf: number | null = null
 const resizeDebounce = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const TYPE_COLORS: Record<string, string> = {
@@ -171,13 +187,13 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  technology: '技术',
-  concept: '概念',
-  person: '人物',
-  organization: '组织',
-  product: '产品',
-  event: '事件',
-  other: '其他',
+  technology: '技术星',
+  concept: '概念星',
+  person: '人物星',
+  organization: '组织星',
+  product: '产品星',
+  event: '事件星',
+  other: '其他星',
 }
 
 const legendItems = computed(() =>
@@ -206,6 +222,49 @@ const filteredEdges = computed(() => {
   return edges.value.filter((e) => nodeIds.has(String(e.src_id)) && nodeIds.has(String(e.dst_id)))
 })
 
+// 生成星空背景粒子
+function createStarfield() {
+  const el = starfieldRef.value
+  if (!el) return
+  const count = 120
+  let html = ''
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * 100
+    const y = Math.random() * 100
+    const size = Math.random() * 2 + 0.5
+    const opacity = Math.random() * 0.5 + 0.1
+    const duration = Math.random() * 3 + 2
+    const delay = Math.random() * 3
+    html += `<span class="star-particle" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;opacity:${opacity};animation-delay:${delay}s;animation-duration:${duration}s" />`
+  }
+  el.innerHTML = html
+}
+
+// 螺旋星系布局
+function computeGalaxyPositions() {
+  const items = filteredNodes.value
+  if (items.length === 0) return []
+
+  // 按提及次数排序（最重要的在中心）
+  const sorted = [...items].sort((a, b) => b.mention_count - a.mention_count)
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+  const spacing = Math.min(120, Math.max(60, 600 / Math.sqrt(sorted.length)))
+
+  const positions: Record<string, { x: number; y: number }> = {}
+  for (let i = 0; i < sorted.length; i++) {
+    const angle = i * goldenAngle
+    // 按类型分组偏移（不同旋臂）
+    const typeOffset = TYPE_COLORS[sorted[i].type] ? 0 : 0.3
+    const radius = Math.sqrt(i + 1) * spacing
+    const a = angle + typeOffset
+    positions[String(sorted[i].id)] = {
+      x: radius * Math.cos(a),
+      y: radius * Math.sin(a),
+    }
+  }
+  return positions
+}
+
 async function loadData() {
   loading.value = true
   try {
@@ -223,18 +282,26 @@ async function loadData() {
 }
 
 function buildG6Data() {
-  const g6Nodes = filteredNodes.value.map((n) => ({
-    id: String(n.id),
-    data: {
-      label: n.name,
-      type: n.type,
-      mentionCount: n.mention_count,
-      description: n.description,
-      color: TYPE_COLORS[n.type] || TYPE_COLORS.other,
-      // 节点大小：基础 28 + 提及次数的对数缩放 + 类型加成
-      size: 28 + Math.log2(n.mention_count + 1) * 6,
-    },
-  }))
+  const positions = computeGalaxyPositions()
+
+  const g6Nodes = filteredNodes.value.map((n) => {
+    const pos = positions[String(n.id)] || { x: 0, y: 0 }
+    const size = 20 + Math.log2(n.mention_count + 1) * 8
+    const color = TYPE_COLORS[n.type] || TYPE_COLORS.other
+    return {
+      id: String(n.id),
+      x: pos.x,
+      y: pos.y,
+      data: {
+        label: n.name,
+        type: n.type,
+        mentionCount: n.mention_count,
+        description: n.description,
+        color,
+        size,
+      },
+    }
+  })
 
   const g6Edges = filteredEdges.value.map((e, idx) => ({
     id: `edge-${e.src_id}-${e.dst_id}-${idx}`,
@@ -258,7 +325,6 @@ function renderGraph() {
   const g6Data = buildG6Data()
 
   if (graph) {
-    // 更新已有图实例（性能优化：不销毁重建）
     graph.setData(g6Data)
     graph.render()
     return
@@ -270,77 +336,92 @@ function renderGraph() {
     width,
     height,
     data: g6Data,
-    layout: {
-      type: 'force',
-      preventOverlap: true,
-      linkDistance: 200,
-      nodeStrength: -300,
-      edgeStrength: 0.15,
-      animation: false,
-    },
+    layout: { type: 'preset' },
     node: {
       style: (d: any) => ({
         fill: d.data?.color || '#3b82f6',
-        size: d.data?.size || 32,
+        size: d.data?.size || 28,
+        // 辐射渐变模拟星体
+        fillRadial: {
+          offset: 0,
+          stops: [
+            { offset: 0, color: '#ffffff' },
+            { offset: 0.3, color: d.data?.color || '#3b82f6' },
+            { offset: 1, color: 'transparent' },
+          ],
+        },
         labelText: d.data?.label || '',
-        labelFill: '#ffffff',
+        labelFill: '#e2e8f0',
         labelFontSize: 11,
         labelFontWeight: 600,
         labelPlacement: 'bottom',
-        labelOffsetY: 8,
+        labelOffsetY: d.data?.size / 2 + 6,
         labelMaxLines: 1,
         labelWordWrap: false,
-        // 外发光
-        shadowBlur: 12,
-        shadowColor: (d.data?.color || '#3b82f6') + '80',
-        // 描边
-        stroke: '#ffffff',
-        lineWidth: 1.5,
+        // 外发光（日冕效果）
+        shadowBlur: d.data?.size * 0.8,
+        shadowColor: (d.data?.color || '#3b82f6') + '60',
+        // 双重发光：内层
+        stroke: (d.data?.color || '#3b82f6') + '40',
+        lineWidth: 3,
+        // 透明度随机微调（模拟闪烁）
+        opacity: 0.9,
       }),
       state: {
         selected: {
-          shadowBlur: 24,
-          shadowColor: '#f59e0b',
-          stroke: '#f59e0b',
+          shadowBlur: 40,
+          shadowColor: (d: any) => (d.data?.color || '#3b82f6') + 'cc',
+          stroke: '#ffffff',
           lineWidth: 3,
+          opacity: 1,
         },
         hover: {
-          shadowBlur: 20,
-          shadowColor: (d: any) => (d.data?.color || '#3b82f6') + 'cc',
+          shadowBlur: 30,
+          shadowColor: (d: any) => (d.data?.color || '#3b82f6') + 'aa',
           lineWidth: 2.5,
+          opacity: 1,
         },
       },
     },
     edge: {
       style: (d: any) => ({
-        stroke: (d.data?.weight || 1) > 2 ? '#94a3b8' : '#cbd5e1',
-        lineWidth: Math.min((d.data?.weight || 1) * 1.2, 4),
-        lineDash: (d.data?.weight || 1) <= 1 ? [4, 4] : undefined,
+        stroke: (d.data?.weight || 1) > 2 ? '#94a3b8' : '#475569',
+        lineWidth: Math.min((d.data?.weight || 1) * 0.8, 3),
         labelText: d.data?.label || '',
-        labelFontSize: 10,
-        labelFill: '#64748b',
+        labelFontSize: 9,
+        labelFill: '#94a3b8',
         labelBackground: true,
-        labelBackgroundFill: '#1e293b',
-        labelBackgroundOpacity: 0.85,
-        labelBackgroundCornerRadius: 4,
-        labelPadding: [2, 6],
+        labelBackgroundFill: '#0f172a',
+        labelBackgroundOpacity: 0.7,
+        labelBackgroundCornerRadius: 3,
+        labelPadding: [1, 4],
         endArrow: true,
-        endArrowSize: 10,
-        opacity: 0.7,
+        endArrowSize: 8,
+        opacity: 0.35,
+        // 曲线效果（星轨）
+        curveOffset: 20,
+        curvePosition: 0.5,
       }),
       state: {
-        hover: { stroke: '#f59e0b', lineWidth: 2.5, opacity: 1 },
+        hover: { stroke: '#f59e0b', lineWidth: 2.5, opacity: 0.8 },
       },
     },
-    behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element', {
-      type: 'hover-activate',
-      degree: 1,
-      // 仅高亮目标节点和边，降低性能开销
-    }],
+    behaviors: [
+      'drag-canvas',
+      'zoom-canvas',
+      {
+        type: 'drag-element',
+        enable: (evt: any) => evt.target?.type === 'node',
+      },
+      {
+        type: 'hover-activate',
+        degree: 1,
+      },
+    ],
     plugins: [
       {
         type: 'minimap',
-        size: [180, 120],
+        size: [160, 110],
         backgroundColor: '#0f172a',
         border: '1px solid #334155',
         filter: (d: any) => d.id !== undefined,
@@ -350,13 +431,10 @@ function renderGraph() {
     animation: false,
   })
 
-  // 布局完成后渐显
-  graph.on('afterlayout', () => {
-    if (container.value) {
-      container.value.style.opacity = '1'
-    }
-  })
+  // 居中
+  graph.fitView()
 
+  // 事件绑定
   graph.on('node:click', async (evt: any) => {
     const nodeId = evt.target?.id
     if (!nodeId) return
@@ -374,12 +452,10 @@ function renderGraph() {
       loading.value = true
       const subgraph = await getSubgraph(props.spaceId, Number(nodeId), 2)
       if (subgraph.nodes.length > 0) {
-        // 合并子图数据到当前图谱
         const existingIds = new Set(nodes.value.map((n) => n.id))
         const newNodes = subgraph.nodes.filter((n) => !existingIds.has(n.id))
         const existingEdgeKeys = new Set(edges.value.map((e) => `${e.src_id}-${e.dst_id}-${e.relation}`))
         const newEdges = subgraph.edges.filter((e) => !existingEdgeKeys.has(`${e.src_id}-${e.dst_id}-${e.relation}`))
-
         if (newNodes.length > 0 || newEdges.length > 0) {
           nodes.value = [...nodes.value, ...newNodes]
           edges.value = [...edges.value, ...newEdges]
@@ -388,9 +464,9 @@ function renderGraph() {
             graph.setData(buildG6Data())
             graph.render()
           }
-          ElMessage.info(`已扩展 ${newNodes.length} 个实体, ${newEdges.length} 条关系`)
+          ElMessage.info(`星系扩展 ${newNodes.length} 颗星体, ${newEdges.length} 条星轨`)
         } else {
-          ElMessage.info('该实体已展示完整子图')
+          ElMessage.info('该星体已完整呈现')
         }
       }
     } catch { /* ignore */ }
@@ -420,23 +496,45 @@ function renderGraph() {
     }
   })
 
-  graph.on('node:pointerleave', () => {
-    tooltipVisible.value = false
-  })
+  graph.on('node:pointerleave', () => { tooltipVisible.value = false })
+  graph.on('canvas:click', () => { tooltipVisible.value = false })
 
-  graph.on('canvas:click', () => {
-    tooltipVisible.value = false
-  })
+  // 拖拽时暂停旋转
+  graph.on('dragstart', () => { isRotating.value = false; stopRotation() })
+  graph.on('dragend', () => { isRotating.value = true; startRotation() })
 
-  graph.on('wheelzoom', updateZoom)
-  graph.on('zoom', updateZoom)
-
-  // 设置初始透明度为 0，布局完成后渐显
-  if (container.value) {
-    container.value.style.opacity = '0'
-    container.value.style.transition = 'opacity 0.6s ease'
-  }
   graph.render()
+  startRotation()
+}
+
+// 旋转动画
+function startRotation() {
+  if (!graph || rotateRaf) return
+  const step = () => {
+    if (!graph || !isRotating.value) {
+      rotateRaf = null
+      return
+    }
+    graph.rotateBy(0.003)
+    rotateRaf = requestAnimationFrame(step)
+  }
+  rotateRaf = requestAnimationFrame(step)
+}
+
+function stopRotation() {
+  if (rotateRaf) {
+    cancelAnimationFrame(rotateRaf)
+    rotateRaf = null
+  }
+}
+
+function toggleRotation() {
+  isRotating.value = !isRotating.value
+  if (isRotating.value) {
+    startRotation()
+  } else {
+    stopRotation()
+  }
 }
 
 function updateZoom() {
@@ -459,6 +557,7 @@ function zoomOut() {
 }
 function fitView() {
   graph?.fitView?.()
+  graph?.fitCenter?.()
   setTimeout(updateZoom, 400)
 }
 
@@ -506,6 +605,7 @@ function typeTagColor(t: string) {
 }
 
 onMounted(async () => {
+  createStarfield()
   await loadData()
   if (container.value) {
     resizeObserver = new ResizeObserver(() => {
@@ -525,6 +625,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopRotation()
   resizeDebounce.value && clearTimeout(resizeDebounce.value)
   resizeObserver?.disconnect()
   graph?.destroy()
@@ -543,17 +644,28 @@ watch(() => props.spaceId, () => {
   min-height: 500px;
 }
 
-/* Toolbar */
+/* 工具栏 */
 .graph-toolbar {
   display: flex;
   gap: var(--space-3);
   align-items: center;
   padding: var(--space-2) var(--space-4);
-  background: white;
+  background: rgba(15, 23, 42, 0.9);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--color-gray-200);
+  border: 1px solid #334155;
   margin-bottom: var(--space-3);
   flex-shrink: 0;
+  backdrop-filter: blur(8px);
+}
+.graph-toolbar :deep(.el-input__wrapper),
+.graph-toolbar :deep(.el-select__wrapper) {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid #475569;
+  box-shadow: none;
+}
+.graph-toolbar :deep(.el-input__inner),
+.graph-toolbar :deep(.el-select__placeholder) {
+  color: #e2e8f0;
 }
 .toolbar-spacer { flex: 1; }
 
@@ -567,18 +679,18 @@ watch(() => props.spaceId, () => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.8);
+  border: 2px solid rgba(255,255,255,0.6);
   cursor: pointer;
-  transition: opacity 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: all 0.2s;
+  box-shadow: 0 0 6px currentColor;
 }
 .legend-dot:hover {
-  transform: scale(1.2);
+  transform: scale(1.3);
 }
 
 .graph-info {
   font-size: var(--font-size-xs);
-  color: var(--color-gray-500);
+  color: #94a3b8;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -589,7 +701,7 @@ watch(() => props.spaceId, () => {
 }
 .zoom-level {
   font-size: var(--font-size-xs);
-  color: var(--color-gray-500);
+  color: #94a3b8;
   min-width: 36px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -601,13 +713,32 @@ watch(() => props.spaceId, () => {
   position: relative;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  background: radial-gradient(ellipse at center, #1e293b 0%, #0f172a 100%);
+  background: radial-gradient(ellipse at 50% 50%, #0f172a 0%, #020617 100%);
 }
 .graph-canvas {
   width: 100%;
   height: 100%;
 }
 .graph-canvas.hidden { display: none; }
+
+/* 星空背景粒子 */
+.starfield {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+:deep(.star-particle) {
+  position: absolute;
+  background: white;
+  border-radius: 50%;
+  animation: twinkle ease-in-out infinite alternate;
+}
+@keyframes twinkle {
+  0% { opacity: 0.1; transform: scale(0.8); }
+  100% { opacity: 0.6; transform: scale(1.2); }
+}
 
 .graph-loading,
 .graph-empty {
@@ -618,9 +749,10 @@ watch(() => props.spaceId, () => {
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
-  color: var(--color-gray-400);
+  color: #94a3b8;
   font-size: var(--font-size-sm);
-  background: radial-gradient(ellipse at center, #1e293b 0%, #0f172a 100%);
+  z-index: 1;
+  background: radial-gradient(ellipse at 50% 50%, #0f172a 0%, #020617 100%);
 }
 .loading-icon { animation: spin 1s linear infinite; }
 @keyframes spin {
@@ -632,7 +764,7 @@ watch(() => props.spaceId, () => {
 .graph-tooltip {
   position: absolute;
   z-index: 100;
-  background: #1e293b;
+  background: rgba(15, 23, 42, 0.95);
   color: #e2e8f0;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
@@ -641,8 +773,9 @@ watch(() => props.spaceId, () => {
   white-space: nowrap;
   max-width: 240px;
   border: 1px solid #334155;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
   line-height: 1.5;
+  backdrop-filter: blur(4px);
 }
 .tooltip-name {
   font-weight: 600;
@@ -686,6 +819,7 @@ watch(() => props.spaceId, () => {
   font-size: 20px;
   font-weight: 700;
   flex-shrink: 0;
+  box-shadow: 0 0 16px currentColor;
 }
 .entity-info h3 {
   margin: 0 0 var(--space-1);
