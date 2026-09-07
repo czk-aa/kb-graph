@@ -72,8 +72,8 @@
 
     <!-- 图谱容器 -->
     <div class="graph-canvas-wrapper">
-      <!-- 背景星空粒子 -->
-      <div class="starfield" ref="starfieldRef" />
+      <!-- 星空背景画布 -->
+      <canvas ref="starCanvasRef" class="starfield-canvas" />
       <div v-if="loading" class="graph-loading">
         <el-icon :size="32" class="loading-icon"><Loading /></el-icon>
         <span>生成星系…</span>
@@ -156,7 +156,7 @@ const router = useRouter()
 
 const container = ref<HTMLElement>()
 const tooltip = ref<HTMLElement>()
-const starfieldRef = ref<HTMLElement>()
+const starCanvasRef = ref<HTMLCanvasElement>()
 const search = ref('')
 const typeFilter = ref('')
 const nodes = ref<GraphNode[]>([])
@@ -222,22 +222,165 @@ const filteredEdges = computed(() => {
   return edges.value.filter((e) => nodeIds.has(String(e.src_id)) && nodeIds.has(String(e.dst_id)))
 })
 
-// 生成星空背景粒子
+// 星空背景画布
+interface Star {
+  x: number; y: number; r: number; alpha: number; speed: number; phase: number
+  color: string; blink: boolean
+}
+interface Nebula { x: number; y: number; r: number; color: string; alpha: number }
+interface ShootingStar {
+  x: number; y: number; dx: number; dy: number; life: number; maxLife: number; alpha: number
+}
+
+let stars: Star[] = []
+let nebulae: Nebula[] = []
+let shootingStars: ShootingStar[] = []
+let starAnimId: number | null = null
+let starTimer = 0
+
 function createStarfield() {
-  const el = starfieldRef.value
-  if (!el) return
-  const count = 120
-  let html = ''
-  for (let i = 0; i < count; i++) {
-    const x = Math.random() * 100
-    const y = Math.random() * 100
-    const size = Math.random() * 2 + 0.5
-    const opacity = Math.random() * 0.5 + 0.1
-    const duration = Math.random() * 3 + 2
-    const delay = Math.random() * 3
-    html += `<span class="star-particle" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;opacity:${opacity};animation-delay:${delay}s;animation-duration:${duration}s" />`
+  const canvas = starCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const W = (canvas.width = canvas.clientWidth)
+  const H = (canvas.height = canvas.clientHeight)
+
+  // 生成 600 颗恒星
+  stars = []
+  for (let i = 0; i < 600; i++) {
+    const r = Math.random()
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: r < 0.7 ? Math.random() * 1.2 + 0.3    // 70% 小星
+           : r < 0.9 ? Math.random() * 1.5 + 1.2  // 20% 中星
+           : Math.random() * 2 + 2.5,              // 10% 亮星
+      alpha: Math.random() * 0.6 + 0.2,
+      speed: Math.random() * 0.02 + 0.005,
+      phase: Math.random() * Math.PI * 2,
+      color: Math.random() < 0.15 ? '#ffe4c4'      // 暖色星
+           : Math.random() < 0.15 ? '#b8d4ff'      // 冷色星
+           : '#ffffff',
+      blink: Math.random() > 0.5,
+    })
   }
-  el.innerHTML = html
+
+  // 星云
+  nebulae = [
+    { x: W * 0.2, y: H * 0.3, r: 120, color: '#3b82f6', alpha: 0.04 },
+    { x: W * 0.7, y: H * 0.6, r: 100, color: '#8b5cf6', alpha: 0.035 },
+    { x: W * 0.5, y: H * 0.2, r: 80, color: '#ec4899', alpha: 0.03 },
+    { x: W * 0.8, y: H * 0.8, r: 90, color: '#10b981', alpha: 0.025 },
+  ]
+
+  startStarAnimation()
+}
+
+function drawStarfield(time: number) {
+  const canvas = starCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  const W = canvas.width; const H = canvas.height
+
+  ctx.clearRect(0, 0, W, H)
+
+  // 绘制星云
+  for (const n of nebulae) {
+    const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r)
+    grad.addColorStop(0, n.color + Math.round(n.alpha * 255).toString(16).padStart(2, '0'))
+    grad.addColorStop(1, 'transparent')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, W, H)
+  }
+
+  // 绘制恒星（带闪烁）
+  for (const s of stars) {
+    const flicker = s.blink ? Math.sin(time * s.speed + s.phase) * 0.3 + 0.7 : 1
+    const a = s.alpha * flicker
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+    ctx.fillStyle = s.color
+    ctx.globalAlpha = a
+    ctx.fill()
+
+    // 亮星加十字光芒
+    if (s.r > 2.5) {
+      ctx.globalAlpha = a * 0.3
+      ctx.strokeStyle = s.color
+      ctx.lineWidth = 0.5
+      for (let ang = 0; ang < 4; ang++) {
+        const rad = (ang / 4) * Math.PI
+        ctx.beginPath()
+        ctx.moveTo(s.x - Math.cos(rad) * s.r * 3, s.y - Math.sin(rad) * s.r * 3)
+        ctx.lineTo(s.x + Math.cos(rad) * s.r * 3, s.y + Math.sin(rad) * s.r * 3)
+        ctx.stroke()
+      }
+    }
+  }
+  ctx.globalAlpha = 1
+
+  // 流星
+  for (let i = shootingStars.length - 1; i >= 0; i--) {
+    const ss = shootingStars[i]
+    ss.x += ss.dx; ss.y += ss.dy; ss.life++
+    ss.alpha = 1 - ss.life / ss.maxLife
+    if (ss.life >= ss.maxLife || ss.alpha <= 0) {
+      shootingStars.splice(i, 1)
+      continue
+    }
+    ctx.beginPath()
+    ctx.moveTo(ss.x, ss.y)
+    ctx.lineTo(ss.x - ss.dx * 4, ss.y - ss.dy * 4)
+    ctx.strokeStyle = `rgba(255,255,255,${ss.alpha * 0.8})`
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+    // 流星头部光晕
+    ctx.beginPath()
+    ctx.arc(ss.x, ss.y, 2, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(255,255,255,${ss.alpha})`
+    ctx.fill()
+  }
+}
+
+function startStarAnimation() {
+  if (starAnimId) return
+  let lastTime = 0
+  function frame(time: number) {
+    const dt = lastTime ? time - lastTime : 0
+    lastTime = time
+    starTimer += dt
+    // 每 6-10 秒生成一颗流星
+    if (starTimer > 6000 + Math.random() * 4000) {
+      starTimer = 0
+      const angle = Math.PI * 0.25 + Math.random() * Math.PI * 0.15
+      const speed = 4 + Math.random() * 3
+      const canvas = starCanvasRef.value
+      if (canvas) {
+        shootingStars.push({
+          x: Math.random() * canvas.width * 0.8 + canvas.width * 0.1,
+          y: 0,
+          dx: Math.cos(angle) * speed,
+          dy: Math.sin(angle) * speed,
+          life: 0,
+          maxLife: 40 + Math.random() * 30,
+          alpha: 1,
+        })
+      }
+    }
+    drawStarfield(time)
+    starAnimId = requestAnimationFrame(frame)
+  }
+  starAnimId = requestAnimationFrame(frame)
+}
+
+function stopStarAnimation() {
+  if (starAnimId) {
+    cancelAnimationFrame(starAnimId)
+    starAnimId = null
+  }
 }
 
 // 螺旋星系布局
@@ -618,6 +761,8 @@ onMounted(async () => {
             graph.setSize?.(w, h)
           }
         }
+        // 画布大小变化时重建星空
+        createStarfield()
       }, 200)
     })
     resizeObserver.observe(container.value)
@@ -626,6 +771,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopRotation()
+  stopStarAnimation()
   resizeDebounce.value && clearTimeout(resizeDebounce.value)
   resizeObserver?.disconnect()
   graph?.destroy()
@@ -721,23 +867,14 @@ watch(() => props.spaceId, () => {
 }
 .graph-canvas.hidden { display: none; }
 
-/* 星空背景粒子 */
-.starfield {
+/* 星空背景画布 */
+.starfield-canvas {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 0;
-  overflow: hidden;
-}
-:deep(.star-particle) {
-  position: absolute;
-  background: white;
-  border-radius: 50%;
-  animation: twinkle ease-in-out infinite alternate;
-}
-@keyframes twinkle {
-  0% { opacity: 0.1; transform: scale(0.8); }
-  100% { opacity: 0.6; transform: scale(1.2); }
 }
 
 .graph-loading,
